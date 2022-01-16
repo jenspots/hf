@@ -1,2 +1,2 @@
-# hostfile
-Command line interface for editing host files easily
+# Hostsfile
+Command line interface for editing hosts files easily

@@ -2,8 +2,8 @@
 # License: AGPL-3.0-only.
 
 cmake_minimum_required(VERSION 3.21)
-project(hostfile C)
+project(hostsfile C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(hostfile hostfile.c)
+add_executable(hostsfile hostsfile.c)
