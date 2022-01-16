@@ -24,6 +24,9 @@
 /* We're not too concerned about the correctness of the hosts file just yet. */
 #define REGEX_HOST_FILE_ENTRY "^([^\t \n]+)[\t ]+([^\t \n]+)\n?$"
 
+/* TODO: This should be dynamically set. */
+#define HOSTS_FILE_PATH "/etc/hosts"
+
 /* Keeps track of what's inside an element union. */
 #define UNION_EMPTY 0
 #define UNION_ELEMENT 1
@@ -124,8 +127,7 @@ struct hosts_file hosts_file_init(char* pathname)
         result.array[index] = wrapper;
         line = NULL;
     }
-
-    /* This value must be kept. */
+    fclose(file);
     result.index = index;
 
     return result;
@@ -272,12 +274,39 @@ void hosts_file_export(FILE* f, struct hosts_file hosts_file)
 }
 
 /**
+ * Write a hosts file to the file at a given path.
+ * @param pathname The path of the file to write to.
+ * @param hosts_file The host file to be written.
+ */
+void hosts_file_write(char * pathname, struct hosts_file hosts_file)
+{
+    FILE * file = fopen(pathname, "w");
+
+    if (file) {
+        hosts_file_export(file, hosts_file);
+    } else {
+        exit(FILE_NOT_FOUND);
+    }
+
+    fclose(file);
+}
+
+/**
  * Prints the help page and exits the program with an error.
  */
 void print_help_and_exit()
 {
+    printf("HOSTFILE: command line interface for editing hosts files easily.\n");
+    printf("Copyright (c) by Jens Pots\n");
+    printf("Licensed under AGPL 3.0-only\n");
+    printf("\n");
+    printf("IMPORTANT\n");
+    printf("\tWriting to /etc/hosts requires root privileges.\n");
     printf("OPTIONS\n");
-    printf("\t-l\t--list\tList all hosts file entries.\n");
+    printf("\t-a <domain> <ip>\tAdd an entry.\n");
+    printf("\t-e\t\t\tEcho the current hosts file.\n");
+    printf("\t-l\t\t\tList all entries.\n");
+    printf("\t-r <domain>\t\tRemove an entry.\n");
     exit(INVALID_ARGUMENTS);
 }
 
@@ -285,35 +314,31 @@ int main(int argc, char ** argv)
 {
     /* TODO: The following statements are toy-examples for testing purposes. */
 
+    struct hosts_file hosts_file = hosts_file_init(HOSTS_FILE_PATH);
+
     if (argc == 1) {
         print_help_and_exit();
     }
 
     if (strcmp(argv[1], (const char *) &"-l") == 0) {
-        struct hosts_file f = hosts_file_init("/etc/hosts");
-        hosts_file_print(f);
-        hosts_file_free(f);
+        hosts_file_print(hosts_file);
     }
 
     if (strcmp(argv[1], (const char *) &"-r") == 0) {
-        struct hosts_file f = hosts_file_init("/etc/hosts");
-        hosts_file_remove(f, strdup(argv[2]));
-        hosts_file_print(f);
-        hosts_file_free(f);
+        hosts_file_remove(hosts_file, strdup(argv[2]));
+        hosts_file_write(HOSTS_FILE_PATH, hosts_file);
     }
 
-    if (strcmp(argv[1], (const char *) &"--dry-run") == 0) {
-        struct hosts_file f = hosts_file_init("/etc/hosts");
-        hosts_file_export(stdout, f);
-        hosts_file_free(f);
+    if (strcmp(argv[1], (const char *) &"-e") == 0) {
+        hosts_file_export(stdout, hosts_file);
     }
 
     if (strcmp(argv[1], (const char *) &"-a") == 0) {
-        struct hosts_file f = hosts_file_init("/etc/hosts");
-        hosts_file_add(f, strdup(argv[2]), strdup(argv[3]));
-        hosts_file_print(f);
-        hosts_file_free(f);
+        hosts_file_add(hosts_file, strdup(argv[3]), strdup(argv[2]));
+        hosts_file_write(HOSTS_FILE_PATH, hosts_file);
     }
+
+    hosts_file_free(hosts_file);
 
     return SUCCESS;
 }
