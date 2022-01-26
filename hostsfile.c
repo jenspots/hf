@@ -9,6 +9,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <regex.h>
+#include <arpa/inet.h>
+#include <sys/param.h>
+
+/* ANSI colors based on https://stackoverflow.com/a/3219471/13197584. */
+#define ANSI_COLOR_RED     "\x1b[31m"
+#define ANSI_COLOR_GREEN   "\x1b[32m"
+#define ANSI_COLOR_YELLOW  "\x1b[33m"
+#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_MAGENTA "\x1b[35m"
+#define ANSI_COLOR_CYAN    "\x1b[36m"
+#define ANSI_COLOR_RESET   "\x1b[0m"
 
 /* Memory management parameters. */
 #define INITIAL_ARRAY_SIZE 16
@@ -20,9 +31,12 @@
 #define INVALID_ARGUMENTS 3
 #define NON_EXHAUSTIVE_CASE 4
 #define MEM_ALLOCATION_FAILURE 5
+#define EXISTING_HOSTS_FILE_INVALID 6
 
 /* We're not too concerned about the correctness of the hosts file just yet. */
 #define REGEX_HOST_FILE_ENTRY "^([^\t \n]+)[\t ]+([^\t \n]+)\n?$"
+#define REGEX_IPv4_PORT "^([0-9.]*):[0-9]+$"
+#define REGEX_IPv6_PORT "^\\[(.*)\\]:[0-9]+$"
 
 /* TODO: This should be dynamically set. */
 #define HOSTS_FILE_PATH "/etc/hosts"
@@ -31,6 +45,12 @@
 #define UNION_EMPTY 0
 #define UNION_ELEMENT 1
 #define UNION_COMMENT 2
+
+/* Keeps track of the IP protocol version. */
+enum ip_kind {
+    IP_KIND_IPv4,
+    IP_KIND_IPv6,
+};
 
 /* Simple abstraction of a hosts file. Essentially a vector. */
 struct hosts_file {
@@ -42,6 +62,7 @@ struct hosts_file {
 /* IP-address and domain name combination. */
 struct mapping {
     char* ip;
+    enum ip_kind kind;
     char* domain;
 };
 
@@ -56,6 +77,51 @@ struct wrapper {
     int type;
     union element element;
 };
+
+/**
+ * Checks whether or not an IP address is IPv4 or IPv6.
+ * @param ip A pointer to the IP address.
+ * @return An instance of the ip_kind enum.
+ */
+enum ip_kind parse_ip_address(char * ip)
+{
+    regex_t regex_ipv4, regex_ipv6;
+    regmatch_t capture_groups[2];
+    long long ip_start, ip_end;
+    unsigned char buffer[MAX(sizeof(struct in_addr), sizeof(struct in6_addr))];
+    char * tmp = ip;
+
+    if (regcomp(&regex_ipv4, REGEX_IPv4_PORT, REG_EXTENDED)) {
+        exit(LOGIC_ERROR);
+    }
+
+    if (regcomp(&regex_ipv6, REGEX_IPv6_PORT, REG_EXTENDED)) {
+        exit(LOGIC_ERROR);
+    }
+
+    /* If a port is given, retrieve the IP address. */
+    if (regexec(&regex_ipv4, ip, 2, capture_groups, 0) == 0) {
+        ip_start = capture_groups[1].rm_so;
+        ip_end = capture_groups[1].rm_eo;
+        tmp = calloc(sizeof(char), ip_end - ip_start + 1);
+        strncpy(tmp, &ip[ip_start], ip_end - ip_start);
+    } else if (regexec(&regex_ipv6, ip, 2, capture_groups, 0) == 0) {
+        ip_start = capture_groups[1].rm_so;
+        ip_end = capture_groups[1].rm_eo;
+        tmp = calloc(sizeof(char), ip_end - ip_start + 1);
+        strncpy(tmp, &ip[ip_start], ip_end - ip_start);
+    }
+
+    /* Check validity using built-in library. */
+    if (inet_pton(AF_INET, tmp, &buffer)) {
+        return IP_KIND_IPv4;
+    } else if (inet_pton(AF_INET6, tmp, &buffer)) {
+        return IP_KIND_IPv6;
+    } else {
+        fprintf(stderr, ANSI_COLOR_RED "ERROR: %s is not a valid IP address.\n" ANSI_COLOR_RESET, tmp);
+        exit(EXISTING_HOSTS_FILE_INVALID);
+    }
+}
 
 /**
  * Make sure the array of a given hosts file allows for one more element.
@@ -115,6 +181,8 @@ struct hosts_file hosts_file_init(char* pathname)
             mapping.domain = calloc(sizeof(char), dom_end - dom_start + 1);
             strncpy(mapping.ip,     &line[ip_start],  ip_end  - ip_start);
             strncpy(mapping.domain, &line[dom_start], dom_end - dom_start);
+
+            mapping.kind = parse_ip_address(mapping.ip);
 
             wrapper.element.mapping = mapping;
             free(line);
@@ -179,7 +247,7 @@ void hosts_file_print(struct hosts_file hosts_file)
             case UNION_EMPTY:
                 break;
             case UNION_ELEMENT:
-                printf("IP address: %s\nDomain: %s\n\n", e.mapping.ip, e.mapping.domain);
+                printf("IPv%d address: %s\nDomain: %s\n\n", e.mapping.kind == IP_KIND_IPv4 ? 4 : 6, e.mapping.ip, e.mapping.domain);
                 break;
             case UNION_COMMENT:
                 break;
@@ -197,18 +265,24 @@ void hosts_file_print(struct hosts_file hosts_file)
  */
 void hosts_file_add(struct hosts_file f, char * ip, char * domain)
 {
+    enum ip_kind kind;
+
     if (domain == NULL || ip == NULL) {
         exit(LOGIC_ERROR);
     }
 
+    kind = parse_ip_address(ip);
+
     /* OPTION A: An existing record will be overwritten. */
     for (int i = 0; i < f.index; ++i) {
         if (f.array[i].type == UNION_ELEMENT) {
-            if (strcmp(domain, f.array[i].element.mapping.domain) == 0) {
-                free(f.array[i].element.mapping.ip);
-                free(domain);
-                f.array[i].element.mapping.ip = ip;
-                return;
+            if (f.array[i].element.mapping.kind == kind) {
+                if (strcmp(domain, f.array[i].element.mapping.domain) == 0) {
+                    free(f.array[i].element.mapping.ip);
+                    free(domain);
+                    f.array[i].element.mapping.ip = ip;
+                    return;
+                }
             }
         }
     }
@@ -218,6 +292,7 @@ void hosts_file_add(struct hosts_file f, char * ip, char * domain)
     f.array[f.index].type = UNION_ELEMENT;
     f.array[f.index].element.mapping.ip = ip;
     f.array[f.index].element.mapping.domain = domain;
+    f.array[f.index].element.mapping.kind = kind;
     ++(f.index);
 }
 
@@ -239,7 +314,6 @@ void hosts_file_remove(struct hosts_file f, char * domain)
                 free(f.array[i].element.mapping.ip);
                 free(f.array[i].element.mapping.domain);
                 f.array[i].type = UNION_EMPTY;
-                return;
             }
         }
     }
