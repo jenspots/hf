@@ -11,6 +11,7 @@
 #include <regex.h>
 #include <arpa/inet.h>
 #include <sys/param.h>
+#include <getopt.h>
 
 /* ANSI colors based on https://stackoverflow.com/a/3219471/13197584. */
 #define ANSI_COLOR_RED     "\x1b[31m"
@@ -45,6 +46,25 @@
 #define UNION_EMPTY 0
 #define UNION_ELEMENT 1
 #define UNION_COMMENT 2
+
+/* Flags set by CLI arguments. */
+static int verbose_flag = 0;
+static int raw_flag = 0;
+
+/* Help message. */
+static char* help_message =
+        "HOSTFILE: command line interface for editing hosts files easily.\n"
+        "Copyright (c) by Jens Pots\n"
+        "Licensed under AGPL 3.0-only\n"
+        "\n"
+        "IMPORTANT\n"
+        "\tWriting to /etc/hosts requires root privileges.\n"
+        "FLAGS\n"
+        "\t-v --verbose\t\tTurn up verbosity.\n"
+        "\t-r --raw\t\tDon't humanize output.\n"
+        "OPTIONS\n"
+        "\t-l --list\t\tList all current entries.\n"
+        "\t-r --remove <domain>\tRemove an entry.\n";
 
 /* Keeps track of the IP protocol version. */
 enum ip_kind {
@@ -125,7 +145,7 @@ enum ip_kind parse_ip_address(char * ip)
 
 /**
  * Make sure the array of a given hosts file allows for one more element.
- * @param hosts_file The hostsfile struct that will be grown.
+ * @param hosts_file The hosts file struct that will be grown.
  */
 void hosts_file_grow(struct hosts_file hosts_file)
 {
@@ -239,6 +259,7 @@ void hosts_file_print(struct hosts_file hosts_file)
 {
     struct wrapper w;
     union element e;
+    int first_print = 1;
 
     for (int i = 0; i < hosts_file.size; ++i) {
         w = hosts_file.array[i];
@@ -247,7 +268,16 @@ void hosts_file_print(struct hosts_file hosts_file)
             case UNION_EMPTY:
                 break;
             case UNION_ELEMENT:
-                printf("IPv%d address: %s\nDomain: %s\n\n", e.mapping.kind == IP_KIND_IPv4 ? 4 : 6, e.mapping.ip, e.mapping.domain);
+                if (!first_print) {
+                    printf("\n");
+                } else {
+                    first_print = 0;
+                }
+                printf("Address: %s\nDomain: %s\n", e.mapping.ip, e.mapping.domain);
+                if (verbose_flag) {
+                    printf("Kind: IPv%d\nLine: %d\n", e.mapping.kind == IP_KIND_IPv4 ? 4 : 6, i);
+                }
+
                 break;
             case UNION_COMMENT:
                 break;
@@ -365,54 +395,71 @@ void hosts_file_write(char * pathname, struct hosts_file hosts_file)
     fclose(file);
 }
 
-/**
- * Prints the help page and exits the program with an error.
- */
-void print_help_and_exit()
+int main (int argc, char **argv)
 {
-    printf("HOSTFILE: command line interface for editing hosts files easily.\n");
-    printf("Copyright (c) by Jens Pots\n");
-    printf("Licensed under AGPL 3.0-only\n");
-    printf("\n");
-    printf("IMPORTANT\n");
-    printf("\tWriting to /etc/hosts requires root privileges.\n");
-    printf("OPTIONS\n");
-    printf("\t-a <domain> <ip>\tAdd an entry.\n");
-    printf("\t-e\t\t\tEcho the current hosts file.\n");
-    printf("\t-l\t\t\tList all entries.\n");
-    printf("\t-r <domain>\t\tRemove an entry.\n");
-    exit(INVALID_ARGUMENTS);
-}
-
-int main(int argc, char ** argv)
-{
-    /* TODO: The following statements are toy-examples for testing purposes. */
-
+    int c;
     struct hosts_file hosts_file = hosts_file_init(HOSTS_FILE_PATH);
 
-    if (argc == 1) {
-        print_help_and_exit();
+    /* Flags + parameters available. */
+    char options[] = "hlr:";
+    struct option long_options[] = {
+            {"verbose", no_argument,       &verbose_flag, 1  },
+            {"brief",   no_argument,       &verbose_flag, 0  },
+            {"raw",     no_argument,       &raw_flag,     1  },
+            {"human",   no_argument,       &raw_flag,     0  },
+            {"list",    no_argument,       NULL, 'l'},
+            {"help",    no_argument,       NULL, 'h'},
+            {"remove",  required_argument, NULL, 'r'},
+            {"version", no_argument,       NULL, 'V'},
+            {NULL,      0,                 NULL, 0  }
+    };
+
+    /* First, we check for any set flags. */
+    while (1) {
+        c = getopt_long(argc, argv, options, long_options, NULL);
+        if (c == -1) {
+            break;
+        } else if (c == '?') {
+            exit(INVALID_ARGUMENTS);
+        }
+    };
+
+    /* Reset the getopt_long function internally. */
+    optind = 1;
+
+    /* Secondly, we go over the arguments. */
+    while (1) {
+        switch (getopt_long(argc, argv, options, long_options, NULL)) {
+            case -1:
+                /* Success! The program may exit. */
+                hosts_file_free(hosts_file);
+                exit(SUCCESS);
+
+            case 0:
+                break;
+
+            case 'l':
+                if (raw_flag)
+                    hosts_file_export(stdout, hosts_file);
+                else
+                    hosts_file_print(hosts_file);
+                break;
+
+            case 'r':
+                hosts_file_remove(hosts_file, strdup(optarg));
+                hosts_file_write(HOSTS_FILE_PATH, hosts_file);
+                break;
+
+            case 'V':
+                printf("Version %s\n", "0.0.1");
+                exit(SUCCESS);
+
+            case 'h':
+                printf("%s", help_message);
+                exit(SUCCESS);
+
+            default:
+                break;
+        }
     }
-
-    if (strcmp(argv[1], (const char *) &"-l") == 0) {
-        hosts_file_print(hosts_file);
-    }
-
-    if (strcmp(argv[1], (const char *) &"-r") == 0) {
-        hosts_file_remove(hosts_file, strdup(argv[2]));
-        hosts_file_write(HOSTS_FILE_PATH, hosts_file);
-    }
-
-    if (strcmp(argv[1], (const char *) &"-e") == 0) {
-        hosts_file_export(stdout, hosts_file);
-    }
-
-    if (strcmp(argv[1], (const char *) &"-a") == 0) {
-        hosts_file_add(hosts_file, strdup(argv[3]), strdup(argv[2]));
-        hosts_file_write(HOSTS_FILE_PATH, hosts_file);
-    }
-
-    hosts_file_free(hosts_file);
-
-    return SUCCESS;
 }
