@@ -21,6 +21,8 @@
 #define ANSI_COLOR_MAGENTA "\x1b[35m"
 #define ANSI_COLOR_CYAN    "\x1b[36m"
 #define ANSI_COLOR_RESET   "\x1b[0m"
+#define ANSI_STYLE_BOLD    "\033[1m"
+#define ANSI_STYLE_RESET   "\033[22m"
 
 /* Memory management parameters. */
 #define INITIAL_ARRAY_SIZE 16
@@ -59,13 +61,16 @@ static char* help_message =
         "Copyright (c) by Jens Pots\n"
         "Licensed under AGPL-3.0-only\n"
         "\n"
-        "IMPORTANT\n"
+        ANSI_STYLE_BOLD"IMPORTANT\n"ANSI_STYLE_RESET
         WHITESPACE"Writing to /etc/hosts requires root privileges.\n"
-        "FLAGS\n"
+        "\n"
+        ANSI_STYLE_BOLD"FLAGS\n"ANSI_STYLE_RESET
         WHITESPACE"--verbose\t\tTurn up verbosity.\n"
         WHITESPACE"--raw\t\t\tDon't humanize output.\n"
         WHITESPACE"--dry-run\t\tSend changes to stdout.\n"
-        "OPTIONS\n"
+        "\n"
+        ANSI_STYLE_BOLD"OPTIONS\n"ANSI_STYLE_RESET
+        WHITESPACE"-a --add <domain>@<ip>\tAdd a new entry.\n"
         WHITESPACE"-l --list\t\tList all current entries.\n"
         WHITESPACE"-r --remove <domain>\tRemove an entry.\n";
 
@@ -247,7 +252,7 @@ void hosts_file_free(struct hosts_file hosts_file)
  * Prints out a hosts_file struct to the console.
  * @param hosts_file The struct to be printed.
  */
-void hosts_file_print(struct hosts_file hosts_file)
+void hosts_file_human_export(FILE* file, struct hosts_file hosts_file)
 {
     struct hosts_file_entry entry;
     int first_print = 1;
@@ -256,11 +261,11 @@ void hosts_file_print(struct hosts_file hosts_file)
         entry = hosts_file.entries[i];
         if (entry.type == UNION_ELEMENT) {
             first_print ? first_print = 0 : printf("\n");
-            printf("Address: %s\n", entry.value.map.ip);
-            printf("Domain: %s\n", entry.value.map.domain);
+            fprintf(file, "Address: %s\n", entry.value.map.ip);
+            fprintf(file, "Domain: %s\n", entry.value.map.domain);
             if (verbose_flag) {
-                printf("Kind: IPv%d\n", entry.value.map.kind == IP_KIND_IPv4 ? 4 : 6);
-                printf("Line: %d\n", i);
+                fprintf(file, "Kind: IPv%d\n", entry.value.map.kind == IP_KIND_IPv4 ? 4 : 6);
+                fprintf(file, "Line: %d\n", i);
             }
         }
     }
@@ -328,12 +333,12 @@ void hosts_file_remove(struct hosts_file f, char * domain)
     }
 }
 
-/**
+/***
  * Exports a hosts file struct to a file.
  * @param f Target file.
  * @param hosts_file Hosts file that will be written to the file.
  */
-void hosts_file_export(FILE* f, struct hosts_file hosts_file)
+void hosts_file_raw_export(FILE* f, struct hosts_file hosts_file)
 {
     struct hosts_file_entry entry;
 
@@ -355,30 +360,34 @@ void hosts_file_export(FILE* f, struct hosts_file hosts_file)
 }
 
 /**
- * Write a hosts file to the file at a given path.
- * @param pathname The path of the file to write to.
+ * Write the hosts file as specified by the various flags.
  * @param hosts_file The host file to be written.
  */
-void hosts_file_write(char * pathname, struct hosts_file hosts_file)
+void hosts_file_write(struct hosts_file hosts_file)
 {
     if (!dry_run_flag) {
-        FILE *file = fopen(pathname, "w");
+        FILE *file = fopen(HOSTS_FILE_PATH, "w");
 
         if (file) {
-            hosts_file_export(file, hosts_file);
+            hosts_file_raw_export(file, hosts_file);
         } else {
             exit(FILE_NOT_FOUND);
         }
 
         fclose(file);
     } else {
-        hosts_file_export(stdout, hosts_file);
+        if (raw_flag) {
+            hosts_file_raw_export(stdout, hosts_file);
+        } else {
+            hosts_file_human_export(stdout, hosts_file);
+        }
     }
 }
 
 int main (int argc, char **argv)
 {
-    int c;
+    char *ip, *domain;
+    int c, tmp;
     struct hosts_file hosts_file = hosts_file_init(HOSTS_FILE_PATH);
 
     /* Flags + parameters available. */
@@ -392,6 +401,7 @@ int main (int argc, char **argv)
             {"list",    no_argument,       NULL, 'l'},
             {"help",    no_argument,       NULL, 'h'},
             {"remove",  required_argument, NULL, 'r'},
+            {"add",     required_argument, NULL, 'a'},
             {"version", no_argument,       NULL, 'V'},
             {NULL,      0,                 NULL, 0  }
     };
@@ -420,23 +430,24 @@ int main (int argc, char **argv)
             case 0:
                 break;
 
+            case 'a':
+                domain = strdup(strtok(optarg, "@"));
+                ip = strdup(strtok(NULL, "@"));
+                hosts_file_add(hosts_file, ip, domain);
+                hosts_file_write(hosts_file);
+                break;
+
             case 'l':
-                if (raw_flag)
-                    hosts_file_export(stdout, hosts_file);
-                else
-                    hosts_file_print(hosts_file);
+                /* Temporarily set the dry run flag to print to the console. */
+                tmp = dry_run_flag;
+                dry_run_flag = 1;
+                hosts_file_write(hosts_file);
+                dry_run_flag = tmp;
                 break;
 
             case 'r':
                 hosts_file_remove(hosts_file, strdup(optarg));
-                if (dry_run_flag) {
-                    if (raw_flag)
-                        hosts_file_export(stdout, hosts_file);
-                    else
-                        hosts_file_print(hosts_file);
-                } else {
-                    hosts_file_write(HOSTS_FILE_PATH, hosts_file);
-                }
+                hosts_file_write(hosts_file);
                 break;
 
             case 'V':
