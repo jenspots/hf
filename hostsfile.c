@@ -452,7 +452,7 @@ int main (int argc, char **argv)
     struct hosts_file hosts_file = hosts_file_init(HOSTS_FILE_PATH);
 
     /* Flags + parameters available. */
-    char options[] = "hlr:";
+    char options[] = "hlr:a:";
     struct option long_options[] = {
             {"verbose", no_argument,       &verbose_flag, 1 },
             {"brief",   no_argument,       &verbose_flag, 0 },
