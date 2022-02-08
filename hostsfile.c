@@ -12,6 +12,9 @@
 #include <arpa/inet.h>
 #include <sys/param.h>
 #include <getopt.h>
+#include <sys/errno.h>
+
+#define PROGRAM "hostsfile"
 
 /* ANSI colors based on https://stackoverflow.com/a/3219471/13197584. */
 #define ANSI_COLOR_RED     "\x1b[31m"
@@ -21,20 +24,31 @@
 #define ANSI_COLOR_MAGENTA "\x1b[35m"
 #define ANSI_COLOR_CYAN    "\x1b[36m"
 #define ANSI_COLOR_RESET   "\x1b[0m"
+
+/* Sequences to change text appearance. */
 #define ANSI_STYLE_BOLD    "\033[1m"
 #define ANSI_STYLE_RESET   "\033[22m"
+
+/* Some syntactic sugar. */
+#define MAGENTA(x) ANSI_COLOR_MAGENTA""x""ANSI_COLOR_RESET
+#define BOLD(x) ANSI_STYLE_BOLD""x""ANSI_STYLE_RESET
 
 /* Memory management parameters. */
 #define INITIAL_ARRAY_SIZE 16
 
 /* Various status codes used throughout. */
-#define SUCCESS 0
-#define FILE_NOT_FOUND 1
-#define LOGIC_ERROR 2
-#define INVALID_ARGUMENTS 3
-#define NON_EXHAUSTIVE_CASE 4
-#define MEM_ALLOCATION_FAILURE 5
-#define EXISTING_HOSTS_FILE_INVALID 6
+enum error_code {
+    ERROR_CODE_SUCCESS,
+    ERROR_CODE_FILE_NOT_FOUND,
+    ERROR_CODE_LOGIC_ERROR,
+    ERROR_CODE_REGEX_INVALID,
+    ERROR_CODE_INVALID_ARGUMENTS,
+    ERROR_CODE_NON_EXHAUSTIVE_CASE,
+    ERROR_CODE_MEM_ALLOCATION,
+    ERROR_CODE_INVALID_FILE,
+    ERROR_CODE_INVALID_IP,
+    ERROR_CODE_FORBIDDEN,
+};
 
 /* We're not too concerned about the correctness of the hosts file just yet. */
 #define REGEX_HOST_FILE_ENTRY "^([^\t \n]+)[\t ]+([^\t \n]+)\n?$"
@@ -55,24 +69,23 @@ static int raw_flag = 0;
 static int dry_run_flag = 0;
 
 /* Help message. */
-#define WHITESPACE "\t"
 static char* help_message =
         "HOSTFILE: command line interface for editing hosts files easily.\n"
         "Copyright (c) by Jens Pots\n"
         "Licensed under AGPL-3.0-only\n"
         "\n"
-        ANSI_STYLE_BOLD"IMPORTANT\n"ANSI_STYLE_RESET
-        WHITESPACE"Writing to /etc/hosts requires root privileges.\n"
+        BOLD("IMPORTANT\n")
+        "\tWriting to /etc/hosts requires root privileges.\n"
         "\n"
-        ANSI_STYLE_BOLD"FLAGS\n"ANSI_STYLE_RESET
-        WHITESPACE"--verbose\t\tTurn up verbosity.\n"
-        WHITESPACE"--raw\t\t\tDon't humanize output.\n"
-        WHITESPACE"--dry-run\t\tSend changes to stdout.\n"
+        BOLD("FLAGS\n")
+        "\t--verbose\t\tTurn up verbosity.\n"
+        "\t--raw\t\t\tDon't humanize output.\n"
+        "\t--dry-run\t\tSend changes to stdout.\n"
         "\n"
-        ANSI_STYLE_BOLD"OPTIONS\n"ANSI_STYLE_RESET
-        WHITESPACE"-a --add <domain>@<ip>\tAdd a new entry.\n"
-        WHITESPACE"-l --list\t\tList all current entries.\n"
-        WHITESPACE"-r --remove <domain>\tRemove an entry.\n";
+        BOLD("OPTIONS\n")
+        "\t-a --add <domain>@<ip>\tAdd a new entry.\n"
+        "\t-l --list\t\tList all current entries.\n"
+        "\t-r --remove <domain>\tRemove an entry.\n";
 
 /* Keeps track of the IP protocol version. */
 enum ip_kind {
@@ -100,6 +113,47 @@ struct hosts_file {
     unsigned int index;
 };
 
+/* Error handler. */
+void handle_error(enum error_code error_code)
+{
+    switch (error_code) {
+        case ERROR_CODE_SUCCESS:
+            handle_error(ERROR_CODE_LOGIC_ERROR); // Ironic
+            break;
+        case ERROR_CODE_FILE_NOT_FOUND:
+            fprintf(stderr, PROGRAM": The hosts file could not be found.\n");
+            break;
+        case ERROR_CODE_LOGIC_ERROR:
+            fprintf(stdout, "DEVELOPER WARNING: something went terribly wrong.\n");
+            break;
+        case ERROR_CODE_REGEX_INVALID:
+            fprintf(stdout, "DEVELOPER WARNING: cannot compile regular expression.\n");
+            break;
+        case ERROR_CODE_INVALID_ARGUMENTS:
+            /* getopt_long will print a message when invalid arguments emerge. */
+            break;
+        case ERROR_CODE_NON_EXHAUSTIVE_CASE:
+            fprintf(stderr, "DEVELOPER WARNING: A switch was not exhaustive.\n");
+            break;
+        case ERROR_CODE_MEM_ALLOCATION:
+            fprintf(stderr, PROGRAM": The system ran out of memory.\n");
+            break;
+        case ERROR_CODE_INVALID_FILE:
+            fprintf(stderr, PROGRAM": The hosts file is not valid.\n");
+            break;
+        case ERROR_CODE_INVALID_IP:
+            fprintf(stderr, PROGRAM": The supplied IP address was not valid.\n");
+            break;
+        case ERROR_CODE_FORBIDDEN:
+            fprintf(stderr, PROGRAM": Permission was denied. Try running with elevated privileges.\n");
+            break;
+        default:
+            handle_error(ERROR_CODE_NON_EXHAUSTIVE_CASE);
+    }
+
+    exit(error_code);
+}
+
 /**
  * Checks whether or not an IP address is IPv4 or IPv6.
  * @param ip A pointer to the IP address.
@@ -114,11 +168,11 @@ enum ip_kind parse_ip_address(char * ip)
     char * tmp = ip;
 
     if (regcomp(&regex_ipv4, REGEX_IPv4_PORT, REG_EXTENDED)) {
-        exit(LOGIC_ERROR);
+        handle_error(ERROR_CODE_REGEX_INVALID);
     }
 
     if (regcomp(&regex_ipv6, REGEX_IPv6_PORT, REG_EXTENDED)) {
-        exit(LOGIC_ERROR);
+        handle_error(ERROR_CODE_REGEX_INVALID);
     }
 
     /* If a port is given, retrieve the IP address. */
@@ -140,8 +194,7 @@ enum ip_kind parse_ip_address(char * ip)
     } else if (inet_pton(AF_INET6, tmp, &buffer)) {
         return IP_KIND_IPv6;
     } else {
-        fprintf(stderr, ANSI_COLOR_RED "ERROR: %s is not a valid IP address.\n" ANSI_COLOR_RESET, tmp);
-        exit(EXISTING_HOSTS_FILE_INVALID);
+        handle_error(ERROR_CODE_INVALID_IP);
     }
 }
 
@@ -177,12 +230,16 @@ struct hosts_file hosts_file_init(char* pathname)
 
     /* Compiles regular expression. */
     if (regcomp(&regex, REGEX_HOST_FILE_ENTRY, REG_EXTENDED)) {
-        exit(LOGIC_ERROR);
+        handle_error(ERROR_CODE_REGEX_INVALID);
     }
 
     /* Open file. */
     if (!(file = fopen(pathname, "r"))) {
-        exit(FILE_NOT_FOUND);
+        if (errno == EACCES) {
+            handle_error(ERROR_CODE_FORBIDDEN);
+        } else {
+            handle_error(ERROR_CODE_FILE_NOT_FOUND);
+        }
     }
 
     /* Initialize array. */
@@ -241,7 +298,7 @@ void hosts_file_free(struct hosts_file hosts_file)
                 free(entry.value.comment);
                 break;
             default:
-                exit(NON_EXHAUSTIVE_CASE);
+                handle_error(ERROR_CODE_NON_EXHAUSTIVE_CASE);
         }
     }
 
@@ -261,11 +318,11 @@ void hosts_file_human_export(FILE* file, struct hosts_file hosts_file)
         entry = hosts_file.entries[i];
         if (entry.type == UNION_ELEMENT) {
             first_print ? first_print = 0 : printf("\n");
-            fprintf(file, "Address: %s\n", entry.value.map.ip);
-            fprintf(file, "Domain: %s\n", entry.value.map.domain);
+            fprintf(file, MAGENTA(BOLD("Address"))"\t%s\n", entry.value.map.ip);
+            fprintf(file, MAGENTA(BOLD("Domain"))"\t%s\n", entry.value.map.domain);
             if (verbose_flag) {
-                fprintf(file, "Kind: IPv%d\n", entry.value.map.kind == IP_KIND_IPv4 ? 4 : 6);
-                fprintf(file, "Line: %d\n", i);
+                fprintf(file, MAGENTA(BOLD("Kind"))"\tIPv%d\n", entry.value.map.kind == IP_KIND_IPv4 ? 4 : 6);
+                fprintf(file, MAGENTA(BOLD("Line"))"\t%d\n", i);
             }
         }
     }
@@ -282,7 +339,7 @@ void hosts_file_add(struct hosts_file f, char * ip, char * domain)
     enum ip_kind kind;
 
     if (domain == NULL || ip == NULL) {
-        exit(LOGIC_ERROR);
+        handle_error(ERROR_CODE_LOGIC_ERROR);
     }
 
     kind = parse_ip_address(ip);
@@ -319,7 +376,7 @@ void hosts_file_add(struct hosts_file f, char * ip, char * domain)
 void hosts_file_remove(struct hosts_file f, char * domain)
 {
     if (domain == NULL) {
-        exit(LOGIC_ERROR);
+        handle_error(ERROR_CODE_LOGIC_ERROR);
     }
 
     for (int i = 0; i < f.index; ++i) {
@@ -354,7 +411,7 @@ void hosts_file_raw_export(FILE* f, struct hosts_file hosts_file)
                 fprintf(f, "%s", entry.value.comment);
                 break;
             default:
-                exit(NON_EXHAUSTIVE_CASE);
+                handle_error(ERROR_CODE_NON_EXHAUSTIVE_CASE);
         }
     }
 }
@@ -371,7 +428,11 @@ void hosts_file_write(struct hosts_file hosts_file)
         if (file) {
             hosts_file_raw_export(file, hosts_file);
         } else {
-            exit(FILE_NOT_FOUND);
+            if (errno == EACCES) {
+                handle_error(ERROR_CODE_FORBIDDEN);
+            } else {
+                handle_error(ERROR_CODE_FILE_NOT_FOUND);
+            }
         }
 
         fclose(file);
@@ -412,7 +473,7 @@ int main (int argc, char **argv)
         if (c == -1) {
             break;
         } else if (c == '?') {
-            exit(INVALID_ARGUMENTS);
+            handle_error(ERROR_CODE_INVALID_ARGUMENTS);
         }
     };
 
@@ -425,7 +486,7 @@ int main (int argc, char **argv)
             case -1:
                 /* Success! The program may exit. */
                 hosts_file_free(hosts_file);
-                exit(SUCCESS);
+                return ERROR_CODE_SUCCESS;
 
             case 0:
                 break;
@@ -452,11 +513,11 @@ int main (int argc, char **argv)
 
             case 'V':
                 printf("Version %s\n", "0.0.1");
-                exit(SUCCESS);
+                return ERROR_CODE_SUCCESS;
 
             case 'h':
                 printf("%s", help_message);
-                exit(SUCCESS);
+                return ERROR_CODE_SUCCESS;
 
             default:
                 break;
