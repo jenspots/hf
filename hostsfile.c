@@ -85,10 +85,14 @@ static char* help_message =
         BOLD("OPTIONS\n")
         "\t-a --add <domain>@<ip>\tAdd a new entry.\n"
         "\t-l --list\t\tList all current entries.\n"
-        "\t-r --remove <domain>\tRemove an entry.\n";
+        "\t-r --remove <domain>\tRemove an entry.\n"
+        "\t-i --import <path>\tTake union with using file.\n"
+        "\t-d --delete <path>\tMinus set operation using file.\n";
+
 
 /* Keeps track of the IP protocol version. */
 enum ip_kind {
+    IP_KIND_NONE,
     IP_KIND_IPv4,
     IP_KIND_IPv6,
 };
@@ -370,10 +374,11 @@ void hosts_file_add(struct hosts_file f, char * ip, char * domain)
 /**
  * Adds/modifies an entry to/in the hosts file.
  * @param f The hosts file that will be modified.
- * @param ip The IP adres of the new entry.
+ * @param ip The IP address of the new entry.
  * @param domain The domain of the new entry.
+ * @param kind If set to non-zero, only matching entries will be deleted.
  */
-void hosts_file_remove(struct hosts_file f, char * domain)
+void hosts_file_remove(struct hosts_file f, char * domain, enum ip_kind kind)
 {
     if (domain == NULL) {
         handle_error(ERROR_CODE_LOGIC_ERROR);
@@ -382,9 +387,11 @@ void hosts_file_remove(struct hosts_file f, char * domain)
     for (int i = 0; i < f.index; ++i) {
         if (f.entries[i].type == UNION_ELEMENT) {
             if (strcmp(domain, f.entries[i].value.map.domain) == 0) {
-                free(f.entries[i].value.map.ip);
-                free(f.entries[i].value.map.domain);
-                f.entries[i].type = UNION_EMPTY;
+                if (kind == IP_KIND_NONE ||f.entries[i].value.map.kind == kind) {
+                    free(f.entries[i].value.map.ip);
+                    free(f.entries[i].value.map.domain);
+                    f.entries[i].type = UNION_EMPTY;
+                }
             }
         }
     }
@@ -445,14 +452,39 @@ void hosts_file_write(struct hosts_file hosts_file)
     }
 }
 
+void hosts_file_merge(struct hosts_file hosts_file, struct hosts_file other)
+{
+    struct hosts_file_entry * entry;
+
+    for (int i = 0; i < other.size; ++i) {
+        entry = other.entries + i;
+        if (entry->type == UNION_ELEMENT) {
+            hosts_file_add(hosts_file, entry->value.map.ip, entry->value.map.domain);
+        }
+    }
+}
+
+void hosts_file_delete(struct hosts_file hosts_file, struct hosts_file other)
+{
+    struct hosts_file_entry * entry;
+
+    for (int i = 0; i < other.size; ++i) {
+        entry = other.entries + i;
+        if (entry->type == UNION_ELEMENT) {
+            hosts_file_remove(hosts_file, entry->value.map.domain, entry->value.map.kind);
+        }
+    }
+}
+
 int main (int argc, char **argv)
 {
     char *ip, *domain;
     int c, tmp;
-    struct hosts_file hosts_file = hosts_file_init(HOSTS_FILE_PATH);
+    struct hosts_file hosts_file, other;
+    hosts_file = hosts_file_init(HOSTS_FILE_PATH);
 
     /* Flags + parameters available. */
-    char options[] = "hlr:a:";
+    char options[] = "hlr:a:i:d:";
     struct option long_options[] = {
             {"verbose", no_argument,       &verbose_flag, 1 },
             {"brief",   no_argument,       &verbose_flag, 0 },
@@ -463,6 +495,8 @@ int main (int argc, char **argv)
             {"help",    no_argument,       NULL, 'h'},
             {"remove",  required_argument, NULL, 'r'},
             {"add",     required_argument, NULL, 'a'},
+            {"import",  required_argument, NULL, 'i'},
+            {"delete",  required_argument, NULL, 'd'},
             {"version", no_argument,       NULL, 'V'},
             {NULL,      0,                 NULL, 0  }
     };
@@ -507,7 +541,19 @@ int main (int argc, char **argv)
                 break;
 
             case 'r':
-                hosts_file_remove(hosts_file, strdup(optarg));
+                hosts_file_remove(hosts_file, strdup(optarg), IP_KIND_NONE);
+                hosts_file_write(hosts_file);
+                break;
+
+            case 'i':
+                other = hosts_file_init(optarg);
+                hosts_file_merge(hosts_file, other);
+                hosts_file_write(hosts_file);
+                break;
+
+            case 'd':
+                other = hosts_file_init(optarg);
+                hosts_file_delete(hosts_file, other);
                 hosts_file_write(hosts_file);
                 break;
 
