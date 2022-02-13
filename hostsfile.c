@@ -67,6 +67,7 @@ enum error_code {
 static int verbose_flag = 0;
 static int raw_flag = 0;
 static int dry_run_flag = 0;
+static int write_flag = 0;
 
 /* Help message. */
 static char* help_message =
@@ -518,9 +519,7 @@ int main (int argc, char **argv)
     while (1) {
         switch (getopt_long(argc, argv, options, long_options, NULL)) {
             case -1:
-                /* Success! The program may exit. */
-                hosts_file_free(hosts_file);
-                return ERROR_CODE_SUCCESS;
+                goto program_exit;
 
             case 0:
                 break;
@@ -529,10 +528,11 @@ int main (int argc, char **argv)
                 domain = strdup(strtok(optarg, "@"));
                 ip = strdup(strtok(NULL, "@"));
                 hosts_file_add(hosts_file, ip, domain);
-                hosts_file_write(hosts_file);
+                write_flag = 1;
                 break;
 
             case 'l':
+                // TODO: The list option should not be used with other args
                 /* Temporarily set the dry run flag to print to the console. */
                 tmp = dry_run_flag;
                 dry_run_flag = 1;
@@ -542,19 +542,21 @@ int main (int argc, char **argv)
 
             case 'r':
                 hosts_file_remove(hosts_file, strdup(optarg), IP_KIND_NONE);
-                hosts_file_write(hosts_file);
+                write_flag = 1;
                 break;
 
             case 'i':
                 other = hosts_file_init(optarg);
                 hosts_file_merge(hosts_file, other);
-                hosts_file_write(hosts_file);
+                write_flag = 1;
+                // TODO: free other
                 break;
 
             case 'd':
                 other = hosts_file_init(optarg);
                 hosts_file_delete(hosts_file, other);
-                hosts_file_write(hosts_file);
+                write_flag = 1;
+                // TODO: free other
                 break;
 
             case 'V':
@@ -569,4 +571,11 @@ int main (int argc, char **argv)
                 break;
         }
     }
+
+    program_exit:
+    if (write_flag) {
+        hosts_file_write(hosts_file);
+    }
+    hosts_file_free(hosts_file);
+    return ERROR_CODE_SUCCESS;
 }
