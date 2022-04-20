@@ -5,17 +5,16 @@
  * License: AGPL-3.0-only.
  */
 
+#include <arpa/inet.h>
+#include <assert.h>
+#include <getopt.h>
+#include <regex.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <regex.h>
-#include <arpa/inet.h>
-#include <sys/param.h>
-#include <getopt.h>
-#include <sys/errno.h>
 #include <stdnoreturn.h>
-#include <assert.h>
-
+#include <string.h>
+#include <sys/errno.h>
+#include <sys/param.h>
 
 /* Information about the program. */
 #define PROGRAM_NAME "hostsfile"
@@ -25,17 +24,17 @@
  * Text transformations using simple color/style codes.
  * Based on https://stackoverflow.com/a/3219471/13197584.
  */
-#define ANSI_COLOR_RED     "\x1b[31m"
-#define ANSI_COLOR_GREEN   "\x1b[32m"
-#define ANSI_COLOR_YELLOW  "\x1b[33m"
-#define ANSI_COLOR_BLUE    "\x1b[34m"
+#define ANSI_COLOR_RED "\x1b[31m"
+#define ANSI_COLOR_GREEN "\x1b[32m"
+#define ANSI_COLOR_YELLOW "\x1b[33m"
+#define ANSI_COLOR_BLUE "\x1b[34m"
 #define ANSI_COLOR_MAGENTA "\x1b[35m"
-#define ANSI_COLOR_CYAN    "\x1b[36m"
-#define ANSI_COLOR_RESET   "\x1b[0m"
-#define ANSI_STYLE_BOLD    "\033[1m"
-#define ANSI_STYLE_RESET   "\033[22m"
-#define MAGENTA(x) ANSI_COLOR_MAGENTA""x""ANSI_COLOR_RESET
-#define BOLD(x) ANSI_STYLE_BOLD""x""ANSI_STYLE_RESET
+#define ANSI_COLOR_CYAN "\x1b[36m"
+#define ANSI_COLOR_RESET "\x1b[0m"
+#define ANSI_STYLE_BOLD "\033[1m"
+#define ANSI_STYLE_RESET "\033[22m"
+#define MAGENTA(x) ANSI_COLOR_MAGENTA "" x "" ANSI_COLOR_RESET
+#define BOLD(x) ANSI_STYLE_BOLD "" x "" ANSI_STYLE_RESET
 
 /* Memory management parameters. */
 #define INITIAL_ARRAY_SIZE 16
@@ -44,7 +43,6 @@
 #define REGEX_HOST_FILE_ENTRY "^([^\t \n]+)[\t ]+([^\t \n]+)\n?$"
 #define REGEX_IPv4_PORT "^([0-9.]*):[0-9]+$"
 #define REGEX_IPv6_PORT "^\\[(.*)\\]:[0-9]+$"
-
 
 /* Set by CLI arguments. */
 char * hosts_file_path = "/etc/hosts";
@@ -58,6 +56,7 @@ static int regex_compiled = 0;
 static regex_t regex_ipv4, regex_ipv6;
 
 /* Help message. */
+// clang-format off
 static char* help_message =
         "HOSTFILE: command line interface for editing hosts files easily.\n"
         "Copyright (c) by Jens Pots\n"
@@ -77,7 +76,7 @@ static char* help_message =
         "\t-r --remove <domain>\tRemove an entry.\n"
         "\t-i --import <path>\tTake union with using file.\n"
         "\t-d --delete <path>\tMinus set operation using file.\n";
-
+// clang-format on
 
 /* Various status codes used throughout. */
 enum error_code {
@@ -111,8 +110,8 @@ struct hosts_file_entry {
     union {
         struct map {
             enum ip_kind kind;
-            char* ip;
-            char* domain;
+            char * ip;
+            char * domain;
         } map;
         char * comment;
     } value;
@@ -125,7 +124,6 @@ struct hosts_file {
     unsigned int index;
 };
 
-
 /* Error handler. */
 noreturn void handle_error(enum error_code error_code)
 {
@@ -135,7 +133,7 @@ noreturn void handle_error(enum error_code error_code)
             error_code = ERROR_CODE_LOGIC_ERROR;
             break;
         case ERROR_CODE_FILE_NOT_FOUND:
-            fprintf(stderr, PROGRAM_NAME": The hosts file could not be found.\n");
+            fprintf(stderr, PROGRAM_NAME ": The hosts file could not be found.\n");
             break;
         case ERROR_CODE_LOGIC_ERROR:
             fprintf(stdout, "DEVELOPER WARNING: something went terribly wrong.\n");
@@ -147,19 +145,19 @@ noreturn void handle_error(enum error_code error_code)
             /* getopt_long will print a message when invalid arguments emerge. */
             break;
         case ERROR_CODE_MEM_ALLOCATION:
-            fprintf(stderr, PROGRAM_NAME": The system ran out of memory.\n");
+            fprintf(stderr, PROGRAM_NAME ": The system ran out of memory.\n");
             break;
         case ERROR_CODE_INVALID_FILE:
-            fprintf(stderr, PROGRAM_NAME": The hosts file is not valid.\n");
+            fprintf(stderr, PROGRAM_NAME ": The hosts file is not valid.\n");
             break;
         case ERROR_CODE_INVALID_IP:
-            fprintf(stderr, PROGRAM_NAME": The supplied IP address was not valid.\n");
+            fprintf(stderr, PROGRAM_NAME ": The supplied IP address was not valid.\n");
             break;
         case ERROR_CODE_FORBIDDEN:
-            fprintf(stderr, PROGRAM_NAME": Permission was denied. Try running with elevated privileges.\n");
+            fprintf(stderr, PROGRAM_NAME ": Permission was denied. Try running with elevated privileges.\n");
             break;
         case ERROR_CODE_ENTRY_DOES_NOT_EXIST:
-            fprintf(stderr, PROGRAM_NAME": The supplied entry was not found.\n");
+            fprintf(stderr, PROGRAM_NAME ": The supplied entry was not found.\n");
             break;
         default:
         case ERROR_CODE_NON_EXHAUSTIVE_CASE:
@@ -192,9 +190,7 @@ enum ip_kind parse_ip_address(char * ip)
     }
 
     /* If a port is given, retrieve the IP address. */
-    if (regexec(&regex_ipv4, ip, 2, capture_groups, 0) == 0 ||
-        regexec(&regex_ipv6, ip, 2, capture_groups, 0) == 0
-    ) {
+    if (regexec(&regex_ipv4, ip, 2, capture_groups, 0) == 0 || regexec(&regex_ipv6, ip, 2, capture_groups, 0) == 0) {
         ip_start = capture_groups[1].rm_so;
         ip_end = capture_groups[1].rm_eo;
         tmp = calloc(sizeof(char), ip_end - ip_start + 1);
@@ -229,13 +225,13 @@ void hosts_file_grow(struct hosts_file hosts_file)
  * @return hosts_file instance.
  * @warning The returned hosts_file_element's array must be freed manually.
  */
-struct hosts_file hosts_file_init(char* pathname)
+struct hosts_file hosts_file_init(char * pathname)
 {
-    FILE* file;
+    FILE * file;
     int index;
     long long ip_start, ip_end, dom_start, dom_end;
     size_t length;
-    char *line = NULL; // Makes `getline` initialize buffer
+    char * line = NULL; // Makes `getline` initialize buffer
     regex_t regex;
     regmatch_t capture_groups[3];
     struct hosts_file hosts_file;
@@ -263,9 +259,9 @@ struct hosts_file hosts_file_init(char* pathname)
     for (index = 0; getline(&line, &length, file) != -1; ++index) {
         if (line[0] != '#' && regexec(&regex, line, 3, capture_groups, 0) == 0) {
             dom_start = capture_groups[2].rm_so;
-            dom_end   = capture_groups[2].rm_eo;
-            ip_start  = capture_groups[1].rm_so;
-            ip_end    = capture_groups[1].rm_eo;
+            dom_end = capture_groups[2].rm_eo;
+            ip_start = capture_groups[1].rm_so;
+            ip_end = capture_groups[1].rm_eo;
             entry.type = UNION_ELEMENT;
             entry.value.map.ip = calloc(sizeof(char), ip_end - ip_start + 1);
             entry.value.map.domain = calloc(sizeof(char), dom_end - dom_start + 1);
@@ -322,7 +318,7 @@ void hosts_file_free(struct hosts_file hosts_file)
  * Prints out a hosts_file struct to the console.
  * @param hosts_file The struct to be printed.
  */
-void hosts_file_human_export(FILE* file, struct hosts_file hosts_file)
+void hosts_file_human_export(FILE * file, struct hosts_file hosts_file)
 {
     struct hosts_file_entry entry;
     int first_print = 1;
@@ -331,11 +327,11 @@ void hosts_file_human_export(FILE* file, struct hosts_file hosts_file)
         entry = hosts_file.entries[i];
         if (entry.type == UNION_ELEMENT) {
             first_print ? first_print = 0 : printf("\n");
-            fprintf(file, MAGENTA(BOLD("Address"))"\t%s\n", entry.value.map.ip);
-            fprintf(file, MAGENTA(BOLD("Domain"))"\t%s\n", entry.value.map.domain);
+            fprintf(file, MAGENTA(BOLD("Address")) "\t%s\n", entry.value.map.ip);
+            fprintf(file, MAGENTA(BOLD("Domain")) "\t%s\n", entry.value.map.domain);
             if (verbose_flag) {
-                fprintf(file, MAGENTA(BOLD("Kind"))"\tIPv%d\n", entry.value.map.kind == IP_KIND_IPv4 ? 4 : 6);
-                fprintf(file, MAGENTA(BOLD("Line"))"\t%d\n", i);
+                fprintf(file, MAGENTA(BOLD("Kind")) "\tIPv%d\n", entry.value.map.kind == IP_KIND_IPv4 ? 4 : 6);
+                fprintf(file, MAGENTA(BOLD("Line")) "\t%d\n", i);
             }
         }
     }
@@ -398,7 +394,7 @@ void hosts_file_remove(struct hosts_file f, char * domain, enum ip_kind kind)
     for (int i = 0; i < f.index; ++i) {
         if (f.entries[i].type == UNION_ELEMENT) {
             if (strcmp(domain, f.entries[i].value.map.domain) == 0) {
-                if (kind == IP_KIND_NONE ||f.entries[i].value.map.kind == kind) {
+                if (kind == IP_KIND_NONE || f.entries[i].value.map.kind == kind) {
                     free(f.entries[i].value.map.ip);
                     free(f.entries[i].value.map.domain);
                     f.entries[i].type = UNION_EMPTY;
@@ -418,7 +414,7 @@ void hosts_file_remove(struct hosts_file f, char * domain, enum ip_kind kind)
  * @param f Target file.
  * @param hosts_file Hosts file that will be written to the file.
  */
-void hosts_file_raw_export(FILE* f, struct hosts_file hosts_file)
+void hosts_file_raw_export(FILE * f, struct hosts_file hosts_file)
 {
     struct hosts_file_entry entry;
 
@@ -446,7 +442,7 @@ void hosts_file_raw_export(FILE* f, struct hosts_file hosts_file)
 void hosts_file_write(struct hosts_file hosts_file)
 {
     if (!dry_run_flag) {
-        FILE *file = fopen(hosts_file_path, "w");
+        FILE * file = fopen(hosts_file_path, "w");
         if (file) {
             hosts_file_raw_export(file, hosts_file);
         } else if (errno == EACCES) {
@@ -497,30 +493,32 @@ void hosts_file_delete(struct hosts_file target, struct hosts_file other)
     }
 }
 
-int main (int argc, char **argv)
+int main(int argc, char ** argv)
 {
     char *ip, *domain;
-    int c, tmp;
+    int c, tmp, break_free;
     struct hosts_file hosts_file, other;
     hosts_file = hosts_file_init(hosts_file_path);
 
     /* Flags + parameters available. */
     char options[] = "hlr:a:i:d:";
+    // clang-format off
     struct option long_options[] = {
-            {"verbose", no_argument,       &verbose_flag, 1 },
-            {"brief",   no_argument,       &verbose_flag, 0 },
-            {"raw",     no_argument,       &raw_flag,     1 },
-            {"human",   no_argument,       &raw_flag,     0 },
-            {"dry-run", no_argument,       &dry_run_flag, 1 },
-            {"list",    no_argument,       NULL, 'l'},
-            {"help",    no_argument,       NULL, 'h'},
-            {"remove",  required_argument, NULL, 'r'},
-            {"add",     required_argument, NULL, 'a'},
-            {"import",  required_argument, NULL, 'i'},
-            {"delete",  required_argument, NULL, 'd'},
-            {"version", no_argument,       NULL, 'V'},
-            {NULL,      0,                 NULL, 0  }
+        {"verbose", no_argument,       &verbose_flag, 1 },
+        {"brief",   no_argument,       &verbose_flag, 0 },
+        {"raw",     no_argument,       &raw_flag,     1 },
+        {"human",   no_argument,       &raw_flag,     0 },
+        {"dry-run", no_argument,       &dry_run_flag, 1 },
+        {"list",    no_argument,       NULL, 'l'},
+        {"help",    no_argument,       NULL, 'h'},
+        {"remove",  required_argument, NULL, 'r'},
+        {"add",     required_argument, NULL, 'a'},
+        {"import",  required_argument, NULL, 'i'},
+        {"delete",  required_argument, NULL, 'd'},
+        {"version", no_argument,       NULL, 'V'},
+        {NULL,      0,                 NULL, 0  }
     };
+    // clang-format on
 
     /* First, we check for any set flags. */
     while (1) {
@@ -536,10 +534,12 @@ int main (int argc, char **argv)
     optind = 1;
 
     /* Secondly, we go over the arguments. */
-    while (1) {
+    break_free = 0;
+    while (!break_free) {
         switch (getopt_long(argc, argv, options, long_options, NULL)) {
             case -1:
-                goto program_exit;
+                break_free = 1;
+                break;
 
             case 'a':
                 domain = strdup(strtok(optarg, "@"));
@@ -589,8 +589,6 @@ int main (int argc, char **argv)
                 break;
         }
     }
-
-    program_exit:
 
     /* No argument given; just write the hostsfile to stdout. */
     if (argc == 1) {
