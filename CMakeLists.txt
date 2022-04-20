@@ -6,4 +6,4 @@ project(hostsfile C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(hostsfile hostsfile.c)
+add_executable(hf hostsfile.c)

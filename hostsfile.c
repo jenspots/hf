@@ -51,7 +51,7 @@ char * hosts_file_path = "/etc/hosts";
 static int verbose_flag = 0;
 static int raw_flag = 0;
 static int dry_run_flag = 0;
-static int write_flag = 0;
+static int modified_flag = 0;
 
 /* Prevents regexes from having to be recompiled every function call. */
 static int regex_compiled = 0;
@@ -91,6 +91,7 @@ enum error_code {
     ERROR_CODE_INVALID_FILE,
     ERROR_CODE_INVALID_IP,
     ERROR_CODE_FORBIDDEN,
+    ERROR_CODE_ENTRY_DOES_NOT_EXIST,
 };
 
 /* Keeps track of the IP protocol version. */
@@ -156,6 +157,9 @@ noreturn void handle_error(enum error_code error_code)
             break;
         case ERROR_CODE_FORBIDDEN:
             fprintf(stderr, PROGRAM_NAME": Permission was denied. Try running with elevated privileges.\n");
+            break;
+        case ERROR_CODE_ENTRY_DOES_NOT_EXIST:
+            fprintf(stderr, PROGRAM_NAME": The supplied entry was not found.\n");
             break;
         default:
         case ERROR_CODE_NON_EXHAUSTIVE_CASE:
@@ -385,6 +389,8 @@ void hosts_file_add(struct hosts_file f, char * ip, char * domain)
  */
 void hosts_file_remove(struct hosts_file f, char * domain, enum ip_kind kind)
 {
+    unsigned int removed_something = 0;
+
     if (domain == NULL) {
         handle_error(ERROR_CODE_LOGIC_ERROR);
     }
@@ -396,9 +402,14 @@ void hosts_file_remove(struct hosts_file f, char * domain, enum ip_kind kind)
                     free(f.entries[i].value.map.ip);
                     free(f.entries[i].value.map.domain);
                     f.entries[i].type = UNION_EMPTY;
+                    removed_something = 1;
                 }
             }
         }
+    }
+
+    if (!removed_something) {
+        handle_error(ERROR_CODE_ENTRY_DOES_NOT_EXIST);
     }
 }
 
@@ -534,7 +545,7 @@ int main (int argc, char **argv)
                 domain = strdup(strtok(optarg, "@"));
                 ip = strdup(strtok(NULL, "@"));
                 hosts_file_add(hosts_file, ip, domain);
-                write_flag = 1;
+                modified_flag = 1;
                 break;
 
             case 'l':
@@ -548,20 +559,20 @@ int main (int argc, char **argv)
 
             case 'r':
                 hosts_file_remove(hosts_file, strdup(optarg), IP_KIND_NONE);
-                write_flag = 1;
+                modified_flag = 1;
                 break;
 
             case 'i':
                 other = hosts_file_init(optarg);
                 hosts_file_merge(hosts_file, other);
-                write_flag = 1;
+                modified_flag = 1;
                 // TODO: free other
                 break;
 
             case 'd':
                 other = hosts_file_init(optarg);
                 hosts_file_delete(hosts_file, other);
-                write_flag = 1;
+                modified_flag = 1;
                 // TODO: free other
                 break;
 
@@ -580,9 +591,21 @@ int main (int argc, char **argv)
     }
 
     program_exit:
-    if (write_flag) {
+
+    /* No argument given; just write the hostsfile to stdout. */
+    if (argc == 1) {
+        dry_run_flag = 1;
         hosts_file_write(hosts_file);
     }
+
+    /* If the hostsfile is modified, write it to file. */
+    else if (modified_flag) {
+        hosts_file_write(hosts_file);
+    }
+
+    /* Free memory. Debatable whether this is good practice. */
     hosts_file_free(hosts_file);
+
+    /* Success! */
     return ERROR_CODE_SUCCESS;
 }
